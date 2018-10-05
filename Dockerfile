@@ -25,7 +25,11 @@ COPY ./ui/build /home/node/app/ui
 
 WORKDIR /home/node/app
 
+RUN touch /home/node/app/nodejs_restclient.log
+RUN chmod 777 /home/node/app/nodejs_restclient.log
+
 ENV NODE_ENV production
+ENV LD_LIBRARY_PATH /home/app/node_modules/appmetrics
 
 COPY package.json yarn.lock auth-keys-print.js server.js /home/node/app/
 RUN yarn

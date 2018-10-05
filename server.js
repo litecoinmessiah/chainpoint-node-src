@@ -20,6 +20,7 @@ const env = require('./lib/parse-env.js')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const request = require('request')
 const apiServer = require('./lib/api-server.js')
 const utils = require('./lib/utils.js')
 const calendar = require('./lib/calendar.js')
@@ -35,6 +36,8 @@ const {
 } = require('./package.json')
 const eventMetrics = require('./lib/event-metrics.js')
 const rocksDB = require('./lib/models/RocksDB.js')
+const appmetrics = require('appmetrics');
+
 
 // the interval at which the service queries the calendar for new blocks
 const CALENDAR_UPDATE_SECONDS = 300
@@ -643,6 +646,87 @@ async function startAsync() {
     // won't force a restart since this situation will not resolve itself.
     process.exit(0)
   }
+}
+
+
+
+if ((env.CHAINPOINT_NODE_SEND_USAGE_STATS === 'enabled' && env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI !== '')) {
+  appmetrics.start()
+  appmetrics.enable('requests')
+  appmetrics.enable('profiling')
+  appmetrics.enable('trace')
+
+  const monitoring = appmetrics.monitor()
+
+  const options = {
+    method: 'POST',
+    url: env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI,
+  }
+
+  monitoring.on('cpu', (cpu) => {
+    const postData = `cpu_percentage,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS} process=${cpu.process},system=${cpu.system} ${cpu.time}`;
+
+    (new Promise((resolve, reject) => {
+      request(Object.assign(options, {
+        body: [postData]
+      }), function (error, response, body) {
+        if (error) reject(error)
+        resolve(body)
+      })
+    })).catch(err => console.error(`ERROR : AppMetrics : CPU : Could not capture metrics : ${err.message}`))
+  });
+
+  monitoring.on('eventloop', (eventLoop) => {
+    const postData = `event_loop_latency,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS} min=${eventLoop.latency.min},max=${eventLoop.latency.max},avg=${eventLoop.latency.avg} ${eventLoop.time}`;
+
+    (new Promise((resolve, reject) => {
+      request(Object.assign(options, {
+        body: [postData]
+      }), function (error, response, body) {
+        if (error) reject(error)
+        resolve(body)
+      })
+    })).catch(err => console.error(`ERROR : AppMetrics : EVENTLOOP : Could not capture metrics : ${err.message}`))
+  });
+
+  monitoring.on('gc', (gc) => {
+    const postData = `gc,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS},type=${gc.type} size=${gc.size},used=${gc.used},duration=${gc.duration} ${gc.time}`;
+
+    (new Promise((resolve, reject) => {
+      request(Object.assign(options, {
+        body: [postData]
+      }), function (error, response, body) {
+        if (error) reject(error)
+        resolve(body)
+      })
+    })).catch(err => console.error(`ERROR : AppMetrics : GC : Could not capture metrics : ${err.message}`))
+  });
+
+  monitoring.on('memory', (memory) => {
+    const postData = `memory,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS} physical_total=${memory.physical_total},physical_used=${memory.physical_used},physical_free=${memory.physical_free},virtual=${memory.virtual},private=${memory.private},physical=${memory.physical} ${memory.time}`;
+
+    (new Promise((resolve, reject) => {
+      request(Object.assign(options, {
+        body: [postData]
+      }), function (error, response, body) {
+        if (error) reject(error)
+        resolve(body)
+      })
+    })).catch(err => console.error(`ERROR : AppMetrics : MEMORY : Could not capture metrics : ${err.message}`))
+  });
+
+  monitoring.on('http', (request) => {
+    const postData = `HTTP_requests,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS},method=${request.method},url=${request.url} duration=${request.duration}  ${request.time}`;
+
+    (new Promise((resolve, reject) => {
+      request(Object.assign(options, {
+        body: [postData]
+      }), function (error, response, body) {
+        if (error) reject(error)
+        resolve(body)
+      })
+    })).catch(err => console.error(`ERROR : AppMetrics : HTTP :  Could not capture metrics : ${err.message}`))
+  });
 }
 
 // get the whole show started
