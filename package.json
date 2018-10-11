@@ -51,6 +51,7 @@
     "async-retry": "^1.1.4",
     "blake2s-js": "^1.2.2",
     "chainpoint-binary": "^4.0.1",
+    "chainpoint-influx": "https://github.com/chainpoint/chainpoint-influx",
     "chainpoint-parse": "^3.0.1",
     "envalid": "^4.0.2",
     "ip": "^1.1.5",

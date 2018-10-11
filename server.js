@@ -20,7 +20,6 @@ const env = require('./lib/parse-env.js')
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
-const request = require('request')
 const apiServer = require('./lib/api-server.js')
 const utils = require('./lib/utils.js')
 const calendar = require('./lib/calendar.js')
@@ -36,8 +35,16 @@ const {
 } = require('./package.json')
 const eventMetrics = require('./lib/event-metrics.js')
 const rocksDB = require('./lib/models/RocksDB.js')
-const appmetrics = require('appmetrics');
-
+const appmetrics = require('appmetrics')
+const InfluxDB = require('chainpoint-influx')
+const eventTracker = new InfluxDB(
+  env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI, {
+    enabled: env.CHAINPOINT_NODE_SEND_USAGE_STATS === 'enabled' ? 'yes' : 'no',
+    batching: 'yes',
+    batchSize: 10,
+    flushingInterval: 10000
+  }
+)
 
 // the interval at which the service queries the calendar for new blocks
 const CALENDAR_UPDATE_SECONDS = 300
@@ -132,13 +139,23 @@ async function validateReflectedUri(val) {
     throw new Error(
       'CHAINPOINT_NODE_REFLECTED_URI only accepts a value of "public" or "private"'
     )
-  else if ((!env.CHAINPOINT_NODE_PUBLIC_URI || env.CHAINPOINT_NODE_PUBLIC_URI === 'http://0.0.0.0') && (!env.CHAINPOINT_NODE_PRIVATE_URI || env.CHAINPOINT_NODE_PRIVATE_URI === 'empty'))
+  else if (
+    (!env.CHAINPOINT_NODE_PUBLIC_URI ||
+      env.CHAINPOINT_NODE_PUBLIC_URI === 'http://0.0.0.0') &&
+    (!env.CHAINPOINT_NODE_PRIVATE_URI ||
+      env.CHAINPOINT_NODE_PRIVATE_URI === 'empty')
+  )
     throw new Error(
       'CHAINPOINT_NODE_REFLECTED_URI requires that a valid value be set for "CHAINPOINT_NODE_PUBLIC_URI" or "CHAINPOINT_NODE_PRIVATE_URI"'
     )
-  else if (!env[`CHAINPOINT_NODE_${val.toUpperCase()}_URI`] || env[`CHAINPOINT_NODE_${val.toUpperCase()}_URI`] === 'empty' || env[`CHAINPOINT_NODE_${val.toUpperCase()}_URI`] === 'http://0.0.0.0') throw new Error(
-    `${`CHAINPOINT_NODE_${val.toUpperCase()}_URI`} is required as it has been set as the CHAINPOINT_NODE_REFLECTED_URI`
+  else if (
+    !env[`CHAINPOINT_NODE_${val.toUpperCase()}_URI`] ||
+    env[`CHAINPOINT_NODE_${val.toUpperCase()}_URI`] === 'empty' ||
+    env[`CHAINPOINT_NODE_${val.toUpperCase()}_URI`] === 'http://0.0.0.0'
   )
+    throw new Error(
+      `${`CHAINPOINT_NODE_${val.toUpperCase()}_URI`} is required as it has been set as the CHAINPOINT_NODE_REFLECTED_URI`
+    )
 }
 
 // establish a connection with the database
@@ -608,10 +625,16 @@ async function startAsync() {
     let nodeUri = await validateUriAsync(env.CHAINPOINT_NODE_PUBLIC_URI)
 
     // Validate CHAINPOINT_NODE_PRIVATE_URI & CHAINPOINT_NODE_REFLECTED_URI if either env variable is set in .env
-    if (env.CHAINPOINT_NODE_PRIVATE_URI && env.CHAINPOINT_NODE_PRIVATE_URI !== 'empty') {
+    if (
+      env.CHAINPOINT_NODE_PRIVATE_URI &&
+      env.CHAINPOINT_NODE_PRIVATE_URI !== 'empty'
+    ) {
       await validatePrivateUriAsync(env.CHAINPOINT_NODE_PRIVATE_URI)
     }
-    if (env.CHAINPOINT_NODE_REFLECTED_URI && env.CHAINPOINT_NODE_REFLECTED_URI !== 'empty') {
+    if (
+      env.CHAINPOINT_NODE_REFLECTED_URI &&
+      env.CHAINPOINT_NODE_REFLECTED_URI !== 'empty'
+    ) {
       await validateReflectedUri(env.CHAINPOINT_NODE_REFLECTED_URI)
     }
 
@@ -648,9 +671,10 @@ async function startAsync() {
   }
 }
 
-
-
-if ((env.CHAINPOINT_NODE_SEND_USAGE_STATS === 'enabled' && env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI !== '')) {
+if (
+  env.CHAINPOINT_NODE_SEND_USAGE_STATS === 'enabled' &&
+  env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI !== ''
+) {
   appmetrics.start()
   appmetrics.enable('requests')
   appmetrics.enable('profiling')
@@ -660,73 +684,115 @@ if ((env.CHAINPOINT_NODE_SEND_USAGE_STATS === 'enabled' && env.CHAINPOINT_NODE_S
 
   const options = {
     method: 'POST',
-    url: env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI,
+    url: env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI
   }
 
-  monitoring.on('cpu', (cpu) => {
-    const postData = `cpu_percentage,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS} process=${cpu.process},system=${cpu.system} ${cpu.time}`;
+  monitoring.on('cpu', cpu => {
+    console.log('cpu', JSON.stringify({
+      timestamp: cpu.time,
+      tags: {
+        app: 'chainpoint-node2',
+        nodeAddress: env.NODE_TNT_ADDRESS
+      },
+      measurement: 'chpnode.cpu_percentage',
+      fields: {
+        process: cpu.process,
+        system: cpu.system
+      }
+    }))
 
-    (new Promise((resolve, reject) => {
-      request(Object.assign(options, {
-        body: [postData]
-      }), function (error, response, body) {
-        if (error) reject(error)
-        resolve(body)
+    eventTracker
+      .writePoints([{
+        timestamp: cpu.time,
+        tags: {
+          app: 'chainpoint-node2',
+          nodeAddress: env.NODE_TNT_ADDRESS
+        },
+        measurement: 'chpnode.cpu_percentage',
+        fields: {
+          process: cpu.process,
+          system: cpu.system
+        }
+      }])
+      .catch(err => {
+        console.error('eventtrcker error...', err)
       })
-    })).catch(err => console.error(`ERROR : AppMetrics : CPU : Could not capture metrics : ${err.message}`))
-  });
+  })
 
-  monitoring.on('eventloop', (eventLoop) => {
-    const postData = `event_loop_latency,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS} min=${eventLoop.latency.min},max=${eventLoop.latency.max},avg=${eventLoop.latency.avg} ${eventLoop.time}`;
+  monitoring.on('eventloop', eventLoop => {
+    eventTracker
+      .writePoints([{
+        timestamp: eventLoop.time,
+        tags: {
+          app: 'chainpoint-node2',
+          nodeAddress: env.NODE_TNT_ADDRESS
+        },
+        measurement: 'chpnode.event_loop_latency',
+        fields: {
+          min: eventLoop.latency.min,
+          max: eventLoop.latency.max,
+          average: eventLoop.latency.avg
+        }
+      }])
+      .catch(() => {})
+  })
 
-    (new Promise((resolve, reject) => {
-      request(Object.assign(options, {
-        body: [postData]
-      }), function (error, response, body) {
-        if (error) reject(error)
-        resolve(body)
-      })
-    })).catch(err => console.error(`ERROR : AppMetrics : EVENTLOOP : Could not capture metrics : ${err.message}`))
-  });
+  monitoring.on('gc', gc => {
+    eventTracker
+      .writePoints([{
+        timestamp: gc.time,
+        tags: {
+          app: 'chainpoint-node2',
+          nodeAddress: env.NODE_TNT_ADDRESS,
+          type: gc.type
+        },
+        measurement: 'chpnode.gc',
+        fields: {
+          size: gc.size,
+          used: gc.used,
+          duration: gc.duration
+        }
+      }])
+      .catch(() => {})
+  })
 
-  monitoring.on('gc', (gc) => {
-    const postData = `gc,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS},type=${gc.type} size=${gc.size},used=${gc.used},duration=${gc.duration} ${gc.time}`;
+  monitoring.on('memory', memory => {
+    eventTracker
+      .writePoints([{
+        timestamp: memory.time,
+        tags: {
+          app: 'chainpoint-node2',
+          nodeAddress: env.NODE_TNT_ADDRESS
+        },
+        measurement: 'chpnode.memory',
+        fields: {
+          physical_total: memory.physical_total,
+          physical_used: memory.physical_used,
+          virtual: memory.virtual,
+          private: memory.private,
+          physical: memory.physical
+        }
+      }])
+      .catch(() => {})
+  })
 
-    (new Promise((resolve, reject) => {
-      request(Object.assign(options, {
-        body: [postData]
-      }), function (error, response, body) {
-        if (error) reject(error)
-        resolve(body)
-      })
-    })).catch(err => console.error(`ERROR : AppMetrics : GC : Could not capture metrics : ${err.message}`))
-  });
-
-  monitoring.on('memory', (memory) => {
-    const postData = `memory,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS} physical_total=${memory.physical_total},physical_used=${memory.physical_used},physical_free=${memory.physical_free},virtual=${memory.virtual},private=${memory.private},physical=${memory.physical} ${memory.time}`;
-
-    (new Promise((resolve, reject) => {
-      request(Object.assign(options, {
-        body: [postData]
-      }), function (error, response, body) {
-        if (error) reject(error)
-        resolve(body)
-      })
-    })).catch(err => console.error(`ERROR : AppMetrics : MEMORY : Could not capture metrics : ${err.message}`))
-  });
-
-  monitoring.on('http', (request) => {
-    const postData = `HTTP_requests,app=chainpoint-node,host=${env.NODE_TNT_ADDRESS},method=${request.method},url=${request.url} duration=${request.duration}  ${request.time}`;
-
-    (new Promise((resolve, reject) => {
-      request(Object.assign(options, {
-        body: [postData]
-      }), function (error, response, body) {
-        if (error) reject(error)
-        resolve(body)
-      })
-    })).catch(err => console.error(`ERROR : AppMetrics : HTTP :  Could not capture metrics : ${err.message}`))
-  });
+  monitoring.on('http', request => {
+    eventTracker
+      .writePoints([{
+        timestamp: request.time,
+        tags: {
+          app: 'chainpoint-node2',
+          nodeAddress: env.NODE_TNT_ADDRESS,
+          method: request.method,
+          url: request.url
+        },
+        measurement: 'chpnode.HTTP_requests',
+        fields: {
+          duration: request.duration
+        }
+      }])
+      .catch(() => {})
+  })
 }
 
 // get the whole show started
