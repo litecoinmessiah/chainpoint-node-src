@@ -364,7 +364,7 @@ chainpoint-binary@^4.0.0, chainpoint-binary@^4.0.1:
 
 "chainpoint-influx@https://github.com/chainpoint/chainpoint-influx":
   version "1.0.0"
-  resolved "https://github.com/chainpoint/chainpoint-influx#d7e5a1db781daac545979f99622242131ea8f4d1"
+  resolved "https://github.com/chainpoint/chainpoint-influx#9b6dce4df5770255f5d7ca029c5fee25145f2fcf"
   dependencies:
     async "^2.4.1"
     async-retry "^1.1.4"

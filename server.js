@@ -37,14 +37,16 @@ const eventMetrics = require('./lib/event-metrics.js')
 const rocksDB = require('./lib/models/RocksDB.js')
 const appmetrics = require('appmetrics')
 const InfluxDB = require('chainpoint-influx')
-const eventTracker = new InfluxDB(
+const eventTracker = (env.CHAINPOINT_NODE_SEND_USAGE_STATS === 'enabled') ? (new InfluxDB(
   env.CHAINPOINT_NODE_SEND_USAGE_STATS_TELEGRAF_URI, {
     enabled: env.CHAINPOINT_NODE_SEND_USAGE_STATS === 'enabled' ? 'yes' : 'no',
     batching: 'yes',
     batchSize: 10,
     flushingInterval: 10000
   }
-)
+)) : {
+  writePoints: () => Promise.resolve()
+}
 
 // the interval at which the service queries the calendar for new blocks
 const CALENDAR_UPDATE_SECONDS = 300
@@ -688,22 +690,9 @@ if (
   }
 
   monitoring.on('cpu', cpu => {
-    console.log('cpu', JSON.stringify({
-      timestamp: cpu.time,
-      tags: {
-        app: 'chainpoint-node2',
-        nodeAddress: env.NODE_TNT_ADDRESS
-      },
-      measurement: 'chpnode.cpu_percentage',
-      fields: {
-        process: cpu.process,
-        system: cpu.system
-      }
-    }))
-
     eventTracker
       .writePoints([{
-        timestamp: cpu.time,
+        timestamp: new Date(),
         tags: {
           app: 'chainpoint-node2',
           nodeAddress: env.NODE_TNT_ADDRESS
@@ -714,15 +703,13 @@ if (
           system: cpu.system
         }
       }])
-      .catch(err => {
-        console.error('eventtrcker error...', err)
-      })
+      .catch(() => {})
   })
 
   monitoring.on('eventloop', eventLoop => {
     eventTracker
       .writePoints([{
-        timestamp: eventLoop.time,
+        timestamp: new Date(),
         tags: {
           app: 'chainpoint-node2',
           nodeAddress: env.NODE_TNT_ADDRESS
@@ -740,7 +727,7 @@ if (
   monitoring.on('gc', gc => {
     eventTracker
       .writePoints([{
-        timestamp: gc.time,
+        timestamp: new Date(),
         tags: {
           app: 'chainpoint-node2',
           nodeAddress: env.NODE_TNT_ADDRESS,
@@ -759,7 +746,7 @@ if (
   monitoring.on('memory', memory => {
     eventTracker
       .writePoints([{
-        timestamp: memory.time,
+        timestamp: new Date(),
         tags: {
           app: 'chainpoint-node2',
           nodeAddress: env.NODE_TNT_ADDRESS
@@ -779,7 +766,7 @@ if (
   monitoring.on('http', request => {
     eventTracker
       .writePoints([{
-        timestamp: request.time,
+        timestamp: new Date(),
         tags: {
           app: 'chainpoint-node2',
           nodeAddress: env.NODE_TNT_ADDRESS,
