@@ -9,4 +9,4 @@ images:
 - 'gcr.io/chainpoint-registry/$REPO_NAME:latest'
 - 'gcr.io/chainpoint-registry/$REPO_NAME:$COMMIT_SHA'
 options:
- machineType: 'N1_STANDARD_4'
+ machineType: 'N1_HIGHCPU_8'
